@@ -2,44 +2,38 @@
 
 import json
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
-from integrations_hub.models.tables import (
-    DeliveryStatus,
-    EventType,
-    OutboxEvent,
-    WebhookSubscription,
-)
+from integrations_hub.models.tables import DeliveryStatus, EventType
 from integrations_hub.services.delivery import deliver_webhook
 
 
-def _make_event() -> OutboxEvent:
-    event = OutboxEvent.__new__(OutboxEvent)
-    event.id = uuid.uuid4()
-    event.event_type = EventType.request_submitted
-    event.payload = json.dumps({"title": "Test", "requester": "alice"})
-    event.created_at = datetime.now(timezone.utc)
-    return event
+@dataclass
+class FakeEvent:
+    id: uuid.UUID = field(default_factory=uuid.uuid4)
+    event_type: EventType = EventType.request_submitted
+    payload: str = field(default_factory=lambda: json.dumps({"title": "Test", "requester": "alice"}))
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-def _make_subscription() -> WebhookSubscription:
-    sub = WebhookSubscription.__new__(WebhookSubscription)
-    sub.id = uuid.uuid4()
-    sub.url = "https://example.com/webhook"
-    sub.secret = "test-secret-at-least-16-chars"
-    sub.enabled = True
-    sub.events = "request_submitted"
-    return sub
+@dataclass
+class FakeSubscription:
+    id: uuid.UUID = field(default_factory=uuid.uuid4)
+    url: str = "https://example.com/webhook"
+    secret: str = "test-secret-at-least-16-chars"
+    enabled: bool = True
+    events: str = "request_submitted"
 
 
 @pytest.mark.asyncio
 async def test_deliver_webhook_success():
-    event = _make_event()
-    sub = _make_subscription()
+    event = FakeEvent()
+    sub = FakeSubscription()
 
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -49,7 +43,6 @@ async def test_deliver_webhook_success():
     mock_client.post.return_value = mock_response
 
     mock_session = AsyncMock()
-    # get_attempt_count returns 0
     mock_session.execute.return_value = MagicMock()
     mock_session.execute.return_value.scalars.return_value.all.return_value = []
 
@@ -64,8 +57,8 @@ async def test_deliver_webhook_success():
 
 @pytest.mark.asyncio
 async def test_deliver_webhook_failure():
-    event = _make_event()
-    sub = _make_subscription()
+    event = FakeEvent()
+    sub = FakeSubscription()
 
     mock_response = MagicMock()
     mock_response.status_code = 500
@@ -89,8 +82,8 @@ async def test_deliver_webhook_failure():
 
 @pytest.mark.asyncio
 async def test_deliver_webhook_timeout():
-    event = _make_event()
-    sub = _make_subscription()
+    event = FakeEvent()
+    sub = FakeSubscription()
 
     mock_client = AsyncMock(spec=httpx.AsyncClient)
     mock_client.post.side_effect = httpx.TimeoutException("timeout")

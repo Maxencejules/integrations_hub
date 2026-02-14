@@ -1,24 +1,28 @@
 import json
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
 from integrations_hub.connectors.slack import format_slack_message, send_slack_notification
-from integrations_hub.models.tables import EventType, OutboxEvent
+from integrations_hub.models.tables import EventType
 
 
-def _make_event(payload: dict | None = None) -> OutboxEvent:
+@dataclass
+class FakeEvent:
+    id: uuid.UUID = field(default_factory=uuid.uuid4)
+    event_type: EventType = EventType.request_submitted
+    payload: str = ""
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+def _make_event(payload: dict | None = None) -> FakeEvent:
     if payload is None:
         payload = {"title": "Test Request", "requester": "alice", "description": "Need access"}
-    event = OutboxEvent.__new__(OutboxEvent)
-    event.id = uuid.uuid4()
-    event.event_type = EventType.request_submitted
-    event.payload = json.dumps(payload)
-    event.created_at = datetime.now(timezone.utc)
-    return event
+    return FakeEvent(payload=json.dumps(payload))
 
 
 def test_format_slack_message():
@@ -51,7 +55,7 @@ async def test_send_slack_notification_no_token():
 @pytest.mark.asyncio
 async def test_send_slack_notification_success():
     event = _make_event()
-    mock_response = AsyncMock()
+    mock_response = MagicMock()
     mock_response.json.return_value = {"ok": True}
 
     mock_client = AsyncMock(spec=httpx.AsyncClient)
@@ -69,7 +73,7 @@ async def test_send_slack_notification_success():
 @pytest.mark.asyncio
 async def test_send_slack_notification_api_error():
     event = _make_event()
-    mock_response = AsyncMock()
+    mock_response = MagicMock()
     mock_response.json.return_value = {"ok": False, "error": "channel_not_found"}
 
     mock_client = AsyncMock(spec=httpx.AsyncClient)
