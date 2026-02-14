@@ -1,3 +1,4 @@
+import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -8,6 +9,11 @@ from integrations_hub.models import Base
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
+
+# Allow env var override for the sync database URL
+sync_url = os.environ.get("IH_DATABASE_URL_SYNC")
+if sync_url:
+    config.set_main_option("sqlalchemy.url", sync_url)
 
 target_metadata = Base.metadata
 
