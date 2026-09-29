@@ -9,9 +9,7 @@ from integrations_hub.models.tables import EventType, OutboxEvent
 logger = structlog.get_logger()
 
 
-async def publish_event(
-    session: AsyncSession, event_type: str, payload: dict
-) -> OutboxEvent:
+async def publish_event(session: AsyncSession, event_type: str, payload: dict) -> OutboxEvent:
     """Write an event to the outbox table for async delivery."""
     event = OutboxEvent(
         event_type=EventType(event_type),

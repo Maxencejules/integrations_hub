@@ -24,6 +24,11 @@ docker compose up --build
 
 The service starts at `http://localhost:8000`. OpenAPI docs at `http://localhost:8000/docs`.
 
+The API currently has no caller authentication or outbound destination policy.
+Run it on a trusted development network. Public deployment needs authenticated
+API access and controls on webhook destinations; HMAC authenticates outgoing
+webhooks, not callers of the management API.
+
 ### Without Docker
 
 Requirements: Python 3.11+, PostgreSQL 16+
@@ -51,7 +56,7 @@ All prefixed with `IH_`:
 | `IH_DATABASE_URL` | `postgresql+asyncpg://postgres:postgres@localhost:5432/integrations_hub` | Async database URL |
 | `IH_DATABASE_URL_SYNC` | `postgresql://postgres:postgres@localhost:5432/integrations_hub` | Sync database URL (Alembic) |
 | `IH_DELIVERY_POLL_INTERVAL_SECONDS` | `2.0` | How often the worker polls the outbox |
-| `IH_DELIVERY_MAX_ATTEMPTS` | `5` | Max delivery attempts before dead letter |
+| `IH_DELIVERY_MAX_ATTEMPTS` | `5` | Max attempts per delivery/replay cycle before dead letter |
 | `IH_DELIVERY_BACKOFF_BASE_SECONDS` | `2.0` | Base for exponential backoff (2^attempt) |
 | `IH_DELIVERY_TIMEOUT_SECONDS` | `10.0` | HTTP timeout for webhook delivery |
 | `IH_SLACK_BOT_TOKEN` | `""` | Slack Bot OAuth token |
@@ -100,13 +105,39 @@ curl http://localhost:8000/api/v1/admin/events/{event_id}/attempts
 curl -X POST http://localhost:8000/api/v1/admin/dead-letters/{dead_letter_id}/replay
 ```
 
+An accepted replay returns HTTP 200 with `delivered: true` or `false` describing
+the receiver outcome. A failed receiver schedules retries (or reaches the cycle's
+dead-letter limit); it does not mean the item was missing. Missing items return
+404, and an event currently claimed by another delivery returns 409.
+
+## Delivery Guarantees
+
+- Automatic retries use the latest failed attempt's due time. Earlier failures
+  cannot bypass a newer backoff. Completed, dead-lettered, unmatched, and not-yet-due
+  events are filtered before the worker's 50-event batch limit.
+- Workers and manual replays claim one event row in PostgreSQL, then recheck
+  eligibility. The claim remains held through HTTP delivery and its database
+  commit; concurrent workers skip claimed events and can process other events.
+  Subscriptions for one event are serialized. Current subscription credentials
+  and routing are reread under a shared row lock before each send, allowing other
+  events to deliver concurrently while updates/deletion wait for active sends.
+- Manual replay starts a fresh retry budget. Historical attempt statuses remain
+  unchanged, attempt numbers increase across every cycle, and
+  `DeadLetter.total_attempts` records the lifetime attempt number.
+  An explicit manual replay can target a disabled subscription; disabling it
+  suppresses automatic delivery and retries.
+- Delivery is **at least once**: a crash after a receiver accepts a request but
+  before the database commit can cause a later resend. Receivers should deduplicate
+  using the stable `X-Webhook-Event-Id`; the live row claim does not eliminate this
+  crash window.
+
 ## Webhook Payload Format
 
 Delivered webhooks include these headers:
 
 | Header | Description |
 |--------|-------------|
-| `X-Webhook-Signature` | HMAC-SHA256 hex digest of `{timestamp}.{payload}` |
+| `X-Webhook-Signature` | HMAC-SHA256 of timestamp, a dot, and the exact UTF-8 HTTP body |
 | `X-Webhook-Timestamp` | Unix timestamp used in signature |
 | `X-Webhook-Event` | Event type (e.g. `request_submitted`) |
 | `X-Webhook-Event-Id` | Unique event ID |
@@ -116,11 +147,7 @@ Verify the signature:
 ```python
 import hmac, hashlib
 
-expected = hmac.new(
-    secret.encode(),
-    f"{timestamp}.{raw_body}".encode(),
-    hashlib.sha256
-).hexdigest()
+expected = hmac.new(secret.encode(), f"{timestamp}.{raw_body}".encode(), hashlib.sha256).hexdigest()
 
 assert hmac.compare_digest(expected, signature_header)
 ```
@@ -138,7 +165,7 @@ assert hmac.compare_digest(expected, signature_header)
 pytest tests/test_signing.py tests/test_schemas.py tests/test_slack_connector.py tests/test_delivery.py -v
 
 # Integration tests (requires Postgres)
-pytest tests/test_api_integration.py -v
+pytest tests/test_api_integration.py tests/test_delivery_integration.py -v
 
 # All tests
 pytest -v
@@ -146,4 +173,27 @@ pytest -v
 
 ## CI
 
-GitHub Actions runs lint (ruff) and tests on every push/PR to `main`. See `.github/workflows/ci.yml`.
+GitHub Actions runs lint (ruff), migrations, and tests on every push/PR to `main`
+or `master`. Delivery tests cover raw-body signature verification, due-time
+retries, queue progress, replay history/budgets, and separate PostgreSQL
+connections competing for the same event. See `.github/workflows/ci.yml`.
+
+## Delivery Demonstration
+
+With PostgreSQL running, use a dedicated demo database and run from the repository
+root (environment assignments below use Bash; set the same variables in your shell):
+
+```bash
+createdb integrations_hub_demo
+export IH_DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/integrations_hub_demo
+export IH_DATABASE_URL_SYNC=postgresql://postgres:postgres@localhost:5432/integrations_hub_demo
+alembic upgrade head
+python examples/delivery_demo.py
+```
+
+The demo publishes through the API into the real outbox, starts the delivery
+worker, and uses a real local HTTP receiver. The receiver independently verifies
+the signature and rejects the first delivery with 503. The second succeeds with
+200. The script verifies both database attempt records, the Unicode/nested
+payload, and the stable event ID, then prints a JSON result. It leaves the demo
+subscription and event for inspection; use a fresh database for another run.

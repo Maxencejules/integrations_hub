@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
 
 jobs:
   lint:
@@ -15,8 +15,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install ruff
-      - run: ruff check src/ tests/
-      - run: ruff format --check src/ tests/
+      - run: ruff check src/ tests/ examples/
+      - run: ruff format --check src/ tests/ examples/
 
   test:
     runs-on: ubuntu-latest
@@ -45,3 +45,11 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: alembic upgrade head
       - run: pytest -v --tb=short
+      - name: Verify delivery demonstration
+        env:
+          IH_DATABASE_URL: "postgresql+asyncpg://postgres:postgres@localhost:5432/integrations_hub_demo"
+          IH_DATABASE_URL_SYNC: "postgresql://postgres:postgres@localhost:5432/integrations_hub_demo"
+        run: |
+          python -c "import psycopg2; c = psycopg2.connect(host='localhost', user='postgres', password='postgres', dbname='postgres'); c.autocommit = True; c.cursor().execute('CREATE DATABASE integrations_hub_demo'); c.close()"
+          alembic upgrade head
+          python examples/delivery_demo.py
