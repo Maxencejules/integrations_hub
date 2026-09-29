@@ -58,9 +58,7 @@ async def update_subscription(
     return sub
 
 
-async def delete_subscription(
-    session: AsyncSession, subscription_id: uuid.UUID
-) -> bool:
+async def delete_subscription(session: AsyncSession, subscription_id: uuid.UUID) -> bool:
     sub = await session.get(WebhookSubscription, subscription_id)
     if sub is None:
         return False

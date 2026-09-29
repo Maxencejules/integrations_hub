@@ -5,8 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from integrations_hub.database import get_session
-from integrations_hub.schemas.events import DeadLetterResponse, DeliveryAttemptResponse
+from integrations_hub.schemas.events import DeliveryAttemptResponse
 from integrations_hub.services.delivery import (
+    DeliveryInProgressError,
     get_delivery_attempts,
     replay_dead_letter,
 )
@@ -23,7 +24,10 @@ async def list_attempts(event_id: uuid.UUID, session: AsyncSession = Depends(get
 @router.post("/dead-letters/{dead_letter_id}/replay", status_code=200)
 async def replay(dead_letter_id: uuid.UUID, session: AsyncSession = Depends(get_session)):
     async with httpx.AsyncClient() as client:
-        success = await replay_dead_letter(session, dead_letter_id, client)
-    if not success:
-        raise HTTPException(status_code=404, detail="Dead letter not found or replay failed")
-    return {"status": "replayed", "dead_letter_id": str(dead_letter_id)}
+        try:
+            success = await replay_dead_letter(session, dead_letter_id, client)
+        except DeliveryInProgressError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if success is None:
+        raise HTTPException(status_code=404, detail="Dead letter not found")
+    return {"status": "replayed", "delivered": success, "dead_letter_id": str(dead_letter_id)}

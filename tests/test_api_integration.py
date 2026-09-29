@@ -1,10 +1,12 @@
 """Integration tests that hit the API with a real database session."""
 
 import uuid
+from unittest.mock import AsyncMock, patch
 
 import pytest
-import pytest_asyncio
 from httpx import AsyncClient
+
+from integrations_hub.services.delivery import DeliveryInProgressError
 
 
 @pytest.mark.asyncio
@@ -125,6 +127,31 @@ async def test_replay_dead_letter_not_found(client: AsyncClient):
     fake_id = str(uuid.uuid4())
     resp = await client.post(f"/api/v1/admin/dead-letters/{fake_id}/replay")
     assert resp.status_code == 404
+
+
+@pytest.mark.parametrize("delivered", [True, False])
+async def test_replay_reports_receiver_outcome_without_false_not_found(client, delivered):
+    dead_letter_id = str(uuid.uuid4())
+    with patch(
+        "integrations_hub.api.admin.replay_dead_letter",
+        new=AsyncMock(return_value=delivered),
+    ):
+        response = await client.post(f"/api/v1/admin/dead-letters/{dead_letter_id}/replay")
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "replayed",
+        "delivered": delivered,
+        "dead_letter_id": dead_letter_id,
+    }
+
+
+async def test_replay_reports_busy_delivery_as_conflict(client):
+    with patch(
+        "integrations_hub.api.admin.replay_dead_letter",
+        new=AsyncMock(side_effect=DeliveryInProgressError("This event is already being delivered")),
+    ):
+        response = await client.post(f"/api/v1/admin/dead-letters/{uuid.uuid4()}/replay")
+    assert response.status_code == 409
 
 
 @pytest.mark.asyncio

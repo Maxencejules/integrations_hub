@@ -1,20 +1,18 @@
 import os
 from collections.abc import AsyncGenerator
 
-import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import (
     AsyncConnection,
     AsyncSession,
     AsyncTransaction,
-    async_sessionmaker,
     create_async_engine,
 )
 
 from integrations_hub.database import get_session
-from integrations_hub.models import Base
 from integrations_hub.main import app
+from integrations_hub.models import Base
 
 TEST_DATABASE_URL = os.environ.get(
     "IH_DATABASE_URL",

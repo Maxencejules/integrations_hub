@@ -46,9 +46,7 @@ class SubscriptionUpdate(BaseModel):
                 raise ValueError("At least one event type is required")
             for event in v:
                 if event not in VALID_EVENTS:
-                    raise ValueError(
-                        f"Invalid event type: {event}. Must be one of {VALID_EVENTS}"
-                    )
+                    raise ValueError(f"Invalid event type: {event}. Must be one of {VALID_EVENTS}")
         return v
 
     @field_validator("secret")
