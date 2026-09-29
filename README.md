@@ -24,6 +24,11 @@ docker compose up --build
 
 The service starts at `http://localhost:8000`. OpenAPI docs at `http://localhost:8000/docs`.
 
+The API currently has no caller authentication or outbound destination policy.
+Run it on a trusted development network. Public deployment needs authenticated
+API access and controls on webhook destinations; HMAC authenticates outgoing
+webhooks, not callers of the management API.
+
 ### Without Docker
 
 Requirements: Python 3.11+, PostgreSQL 16+
@@ -172,3 +177,23 @@ GitHub Actions runs lint (ruff), migrations, and tests on every push/PR to `main
 or `master`. Delivery tests cover raw-body signature verification, due-time
 retries, queue progress, replay history/budgets, and separate PostgreSQL
 connections competing for the same event. See `.github/workflows/ci.yml`.
+
+## Delivery Demonstration
+
+With PostgreSQL running, use a dedicated demo database and run from the repository
+root (environment assignments below use Bash; set the same variables in your shell):
+
+```bash
+createdb integrations_hub_demo
+export IH_DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/integrations_hub_demo
+export IH_DATABASE_URL_SYNC=postgresql://postgres:postgres@localhost:5432/integrations_hub_demo
+alembic upgrade head
+python examples/delivery_demo.py
+```
+
+The demo publishes through the API into the real outbox, starts the delivery
+worker, and uses a real local HTTP receiver. The receiver independently verifies
+the signature and rejects the first delivery with 503. The second succeeds with
+200. The script verifies both database attempt records, the Unicode/nested
+payload, and the stable event ID, then prints a JSON result. It leaves the demo
+subscription and event for inspection; use a fresh database for another run.
